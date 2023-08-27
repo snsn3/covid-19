@@ -16,7 +16,6 @@ library(plotly)
 library(lubridate)
 library(rlang)
 
-
 # Load and Prepare Data ---------------------------------------------------
 
 Canada <- read.csv("https://sante-infobase.canada.ca/src/data/covidLive/covid19-download.csv")
