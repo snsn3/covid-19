@@ -1,0 +1,256 @@
+library(shiny)
+library(shinydashboard)
+library(DT)
+library(plotly)
+library(dplyr)
+library(lubridate)
+library(COVID19)
+library(tidyr)
+library(ggplot2)
+library (RCurl)
+library(magrittr)
+library(DT)
+library(dplyr)
+library(stringr)
+library(plotly)
+library(lubridate)
+library(rlang)
+
+
+# Load and Prepare Data ---------------------------------------------------
+
+Canada <- read.csv("https://sante-infobase.canada.ca/src/data/covidLive/covid19-download.csv")
+Canada <- Canada %>% 
+  select(date, prnameFR, numtotal_last7) %>% 
+  filter(prnameFR == "Nunavut" | prnameFR =="Terre-Neuve-et-Labrador") %>% 
+  rename(region = prnameFR, cas_quotidien = numtotal_last7)  %>% 
+  mutate(cas_quotidien = ifelse(cas_quotidien < 0, 0, cas_quotidien)) %>% 
+  mutate(date = as.Date(date))
+
+Greenland <- covid19(country = "DNK", level=2)
+Greenland <- Greenland %>% 
+  filter(administrative_area_level_2=="Greenland") %>% 
+  ungroup() %>% 
+  select(date, administrative_area_level_2, confirmed) %>% 
+  mutate(confirmed = ifelse(is.na(confirmed),0, confirmed)) %>% 
+  mutate(cas_quotidien = confirmed-lag(confirmed, default=first(confirmed))) %>%
+  rename(region = administrative_area_level_2) %>%
+  mutate(cas_quotidien = ifelse(cas_quotidien < 0, 0, cas_quotidien)) %>% 
+  mutate(region="Groenland") %>% 
+  select(-confirmed)  %>% 
+  filter(date > "2020-03-10")
+
+Nunavik <- read.csv("https://kustom.radio-canada.ca/data/covid-19/quebec.csv", skip = 6) %>% 
+  filter(Geo=="Nunavik") %>% 
+  select(Date, Geo, Confirmed) %>% 
+  mutate(cas_quotidien = Confirmed-lag(Confirmed, default=first(Confirmed))) %>% 
+  mutate(cas_quotidien = ifelse(cas_quotidien < 0, 0, cas_quotidien)) %>% 
+  mutate(Date = as.Date(Date)) %>% 
+  select(-Confirmed) %>% 
+  rename(date=Date, region=Geo)
+FillInfo <- data.frame(date=seq(as.Date("2020-03-11"), as.Date("2020-03-26"), by="day"),
+                       region=rep("Nunavik", 16),
+                       cas_quotidien = rep(0,16))
+Nunavik=rbind(FillInfo, Nunavik)
+
+RegionsDonnees <- rbind(Canada, Greenland, Nunavik) %>% 
+  arrange(date)
+
+Dates <- read.csv("mesures3.csv", header = TRUE, sep=",") %>% 
+  pull(Date) %>% 
+  unique() %>% 
+  as.Date()
+
+options(scipen=999)
+
+tout_Canada <- getURL("https://health-infobase.canada.ca/src/data/covidLive/covid19-download.csv")
+tout_Canada_renamed <- read.csv(text=tout_Canada)
+tout_Canada_renamed2 <- rename(tout_Canada_renamed,c("date_rapport"="date","cas"="numtotal_last7","province"="prname"))
+
+
+tout_Canada_renamed2 %<>%
+  mutate(date_rapport= as.Date(date_rapport, format= "%Y-%m-%d"))
+str(tout_Canada_renamed2)
+
+tout_Canada_graphs <- tout_Canada_renamed2 %>%
+  count(date_rapport, cas, province) %>% 
+  ggplot2(mapping = aes(x = date_rapport, y = cas, color = province)) +
+  geom_line()+labs(
+    title='Vue globale (cas cumulatifs) au Canada', 
+    subtitle = 'Canada',
+    caption='Source donnees: Santé Canada Info Base')
+
+
+
+
+# UI Start ----------------------------------------------------------------
+
+ui <- dashboardPage(skin = "purple",
+                    dashboardHeader(title = "Coopération transfrontalière dans l’est de l’Arctique nord-américain et gestion commune de lutte à la COVID-19",
+                                    titleWidth = 1020), 
+                    
+                    # Sidebar definition ------------------------------------------------------
+                    dashboardSidebar(
+                      sidebarMenu(
+                        width = 350,
+                        menuItem("Accueil", tabName = "homep", icon = icon("home")),
+                        menuItem("Mesures gouvernementales", tabName = "MyData", icon=icon("table")),
+                        menuItem("Cas quotidiens", icon = icon("table"),
+                                 menuSubItem("Diagramme linéaire", tabName = "line", icon = icon("chart-line")),
+                                 menuSubItem("Carte thermique", tabName = "heat", icon = icon("th")),
+                                 menuSubItem("Vue globale, Canada", tabName = "geom", icon = icon("bar-chart-o"))
+                        )#,
+                        #menuItem("English", icon=icon("globe"))
+                      )
+                    ),
+                    ### End of Sidebar definition
+                    
+                    
+                    # Body Start -------------------------------------------------------------
+                    
+                    dashboardBody(
+                      includeCSS("www/custom.css"),
+                      tags$style(type="text/css",
+                                 ".shiny-output-error { visibility: hidden; }",
+                                 ".shiny-output-error:before { visibility: visible; content: 'Erreur: incapable de produire les tableaux ou les graphiques.'; }"
+                      ),
+                      tags$table(style="width:800px; cellpadding:20px",
+                                 tags$tr(
+                                   tags$td(tags$img(src="Logo OAPA_site.png")),
+                                   tags$td(tags$img(src="Logo_OPSA_site.png")),
+                                   tags$td(tags$img(src="LogoENAP.jpg"))
+                                 )
+                      ),
+                      tags$p(),
+                      tags$hr(),
+                      tabItems(
+                        
+                        
+                        # Start Home Page ---------------------------------------------------------
+                        tabItem(tabName = "homep",  #Home Page
+                                tags$h3("Coopération transfrontalière dans l’est de l’Arctique nord-américain et gestion commune de lutte à la COVID-19"),     
+                                tags$p("Financé par le Secrétariat québécois aux relations intergouvernementale canadiennes, Ce projet de recherche vise à étudier la capacité et l’intérêt des administrations et des gouvernements locaux, régionaux et inuits à mettre sur pied un forum de coopération transfrontalière dans l’est de l’Arctique nord-américain, afin d’élaborer une stratégie commune et cohérente dans la gestion de la lutte à la COVID-19, tout en tenant compte des enjeux de transport et de développement économique qui devront faire partie des éléments de relance de cette région à la suite de la pandémie."),     
+                                tags$p("Ce site présente des données préliminaires que nous avons colligés jusqu'à présent, sur les mesures qui ont été adoptées dans les différentes régions de l'est de l'Artcique nord-américain pour lutter contre la COVID-19."),
+                                tags$p("Pour plus d'informations, communiquez avec:"),
+                                tags$a(href="mailto:Jean-Francois.Savard@enap.ca", "Jean-François Savard or "),
+                                tags$a(href="mailto:mathieulandriault77@hotmail.com", "Mathieu Landriault"),
+                                tags$p(),
+                                tags$hr(),
+                                tags$h4("Membres de l'équipe"),
+                                tags$table(
+                                  tags$tr(tags$td("Jean-François Savard", width=150),tags$td("ENAP, OAPA")),
+                                  tags$tr(tags$td("Mathieu Landriault"),tags$td("OPSA")),
+                                  tags$tr(tags$td("Emmanuel Saël"),tags$td("ENAP, OAPA")),
+                                  tags$tr(tags$td("Stany Nzobonimpa"),tags$td("ENAP, OAPA"))
+                                ),
+                                tags$h4("Financé par"),
+                                tags$img(src="SQRC_couleur.svg", height="65")
+                                
+                        ), 
+                        
+                        ### End of Home Page
+                        
+                        # DataBase -------------------------------------------------------
+                        
+                        tabItem(tabName = "MyData",
+                                
+                                tags$h3("Suivi des mesures de lutte à la pandémie de COVID-19"),
+                                tags$table(style="border-spacing: 10px; border-collapse: separate;",
+                                           tags$tr(
+                                             tags$td(dateInput('date1', label = "Début", value=min(Dates), width="100px")),
+                                             tags$td(dateInput('date2', label = "Fin", value=max(Dates), width="100px")),
+                                             tags$td(selectizeInput("reg", "Région", c("Toutes", "GROENLAND", "NUNAVIK", "NUNAVUT", "TERRE-NEUVE-ET-LABRADOR"))),
+                                             tags$td(selectizeInput("mes", "Mesure", c("Toutes", "Sanitaire", "Règlementaire/Restrictive", "Économique", "Éducative"))
+                                             ))),
+                                DTOutput("mytable"),
+                                tags$h4("Financé par"),
+                                tags$img(src="SQRC_couleur.svg", height="65")
+                        ),
+                        
+                        tabItem(tabName = "line",
+                                plotlyOutput("linechart"),
+                                tags$sub("Sources: Gouvernement du Canada (2021), [https://sante-infobase.canada.ca/src/data/covidLive/covid19-download.csv]; 
+                                         Radio-Canada (2021), [https://kustom.radio-canada.ca/data/covid-19/quebec.csv]; Guidotti et Ardia (2021), [https://cran.r-project.org/web/packages/COVID19/index.html]"),
+                                tags$h5("Financé par"),
+                                tags$img(src="SQRC_couleur.svg", height="65")
+                        ),
+                        
+                        tabItem(tabName = "heat",
+                                plotlyOutput("heatmap"),
+                                tags$sub("Sources: Gouvernement du Canada (2021), [https://sante-infobase.canada.ca/src/data/covidLive/covid19-download.csv]; 
+                                         Radio-Canada (2021), [https://kustom.radio-canada.ca/data/covid-19/quebec.csv]; Guidotti et Ardia (2021), [https://cran.r-project.org/web/packages/COVID19/index.html]"),
+                                tags$h5("Financé par"),
+                                tags$img(src="SQRC_couleur.svg", height="65")
+                                
+                        ),
+                        tabItem(tabName = "geom",
+                                plotlyOutput("geom_line"),
+                                tags$sub("Sources: Gouvernement du Canada (2021), [https://sante-infobase.canada.ca/src/data/covidLive/covid19-download.csv]; 
+                                         Radio-Canada (2021), [https://kustom.radio-canada.ca/data/covid-19/quebec.csv]; Guidotti et Ardia (2021), [https://cran.r-project.org/web/packages/COVID19/index.html]"),
+                                tags$h5("Financé par"),
+                                tags$img(src="SQRC_couleur.svg", height="65"))
+                        ### End of DataBase
+                        
+                      )
+                    )
+)
+
+
+server <- function(input, output, session) { 
+  
+  # Library declaration for server ------------------------------------------  
+  
+
+  
+  
+  # Loading data  ------------------------------------------  
+  
+  BaseDonnees <- read.csv("mesures3.csv", header = TRUE, sep = ",", stringsAsFactors = FALSE)
+  
+  output$mytable <- renderDT({
+    
+    if(input$reg != "Toutes"){
+      BaseDonnees <- BaseDonnees[BaseDonnees$Region == input$reg,]
+    }
+    
+    if(input$mes != "Toutes"){
+      BaseDonnees <- BaseDonnees %>% 
+        filter(str_detect(Mesure, input$mes))
+    }
+    
+    BaseDonnees <-  BaseDonnees %>% 
+      filter(as_date(Date) >= input$date1, as_date(Date) <= input$date2)
+    
+    datatable(BaseDonnees[,2:7], 
+              options = list(dom = "Ptip"),list(columnDefs = list(list(width = '100%', targets = list(5,6),
+                                                                       list(columnDefs=list(list(width='60%', targets=list(1,2,3,4),pageLength=10)))))),
+              escape= FALSE
+    )
+  })
+  
+  
+  output$linechart <- renderPlotly({
+    
+    titreX <- list(title="Date")
+    titreY <- list(title= "Nombre de cas quotidiens")
+    titrelegende <- list(title=list(text="<b>Régions</b>"))
+    
+    plot_ly(RegionsDonnees, x=~date, y=~cas_quotidien) %>% 
+      add_lines(linetype=~region) %>% 
+      layout(xaxis=titreX, yaxis=titreY, title="Nombre de cas quotidiens selon les régions", legend=titrelegende)
+  })
+  
+  output$heatmap <- renderPlotly({
+    plot_ly(x=RegionsDonnees$date, y=RegionsDonnees$region, z=RegionsDonnees$cas_quotidien, type = "heatmap") %>% 
+      layout(title="Nombre de cas quotidiens selon les régions")
+  })
+  output$geom_line <- renderPlotly({
+    tout_Canada_interact<- ggplotly(tout_Canada_graphs,dynamicTicks = FALSE, 
+    width=NULL,height = NULL,
+    tooltip = 'all', originalData = TRUE)
+    tout_Canada_interact
+  })
+  
+}
+
+shinyApp(ui, server)
